@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use bevy::{prelude::*, render::extract_component::ExtractComponent};
-use vello::SceneFragment;
 
 use crate::Riv;
 
@@ -51,39 +50,48 @@ pub struct SpriteEntity {
 
 #[derive(Bundle, Debug, Default)]
 pub struct SceneTarget {
-    pub image: Handle<Image>,
+    pub image: SceneImage,
     pub sprite: SpriteEntity,
     pub mesh: MeshEntity,
 }
 
+#[derive(Clone, Component, Debug, Default, Deref, DerefMut)]
+pub struct SceneImage(pub Handle<Image>);
+
+impl From<Handle<Image>> for SceneImage {
+    fn from(handle: Handle<Image>) -> Self {
+        Self(handle)
+    }
+}
+
 #[derive(Component, Deref)]
-pub(crate) struct VelloFragment(pub Arc<SceneFragment>);
+pub(crate) struct VelloFragment(pub Arc<vello::Scene>);
 
 #[derive(Component)]
 pub(crate) struct VelloScene {
-    pub fragment: Arc<vello::SceneFragment>,
+    pub fragment: Arc<vello::Scene>,
     pub image_handle: Handle<Image>,
     pub width: u32,
     pub height: u32,
 }
 
-impl ExtractComponent for VelloScene {
-    type Query = (
+impl ExtractComponent for VelloFragment {
+    type QueryData = (
         &'static VelloFragment,
-        &'static Handle<Image>,
+        &'static SceneImage,
         &'static Viewport,
     );
 
-    type Filter = ();
+    type QueryFilter = ();
 
-    type Out = Self;
+    type Out = VelloScene;
 
     fn extract_component(
-        (fragment, image, viewport): bevy::ecs::query::QueryItem<'_, Self::Query>,
-    ) -> Option<Self> {
-        Some(Self {
+        (fragment, image, viewport): bevy::ecs::query::QueryItem<'_, '_, Self::QueryData>,
+    ) -> Option<Self::Out> {
+        Some(VelloScene {
             fragment: fragment.0.clone(),
-            image_handle: image.clone(),
+            image_handle: image.0.clone(),
             width: viewport.width(),
             height: viewport.height(),
         })

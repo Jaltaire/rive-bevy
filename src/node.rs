@@ -7,18 +7,24 @@ use bevy::{
     prelude::*,
     render::{
         render_asset::RenderAssets,
-        render_graph::Node,
+        render_graph::{Node, RenderLabel},
         render_resource::{
-            Extent3d, ImageCopyTexture, Origin3d, Texture, TextureAspect, TextureDescriptor,
+            Extent3d, Origin3d, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor,
             TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         },
         renderer::{RenderDevice, RenderQueue},
+        texture::GpuImage,
     },
 };
 use etagere::{euclid::Size2D, AllocId, Allocation, AtlasAllocator, Rectangle};
-use vello::{kurbo::Affine, RenderParams, Renderer, RendererOptions, SceneBuilder};
+use vello::{kurbo::Affine, AaConfig, AaSupport, RenderParams, Renderer, RendererOptions};
 
 use crate::components::VelloScene;
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub enum VelloNodeLabel {
+    Vello,
+}
 
 struct Sizes<'w> {
     world: &'w World,
@@ -42,7 +48,7 @@ impl VelloAtlas {
     fn required_size(sizes: &mut Sizes) -> u32 {
         let total_area: u32 = sizes.iter().map(|(_, w, h)| w * h).sum();
 
-        let theoretical_min_size = (total_area as f32).sqrt().ceil() as u32;
+        let theoretical_min_size = (total_area.max(1) as f32).sqrt().ceil() as u32;
         let mut size = theoretical_min_size.next_power_of_two();
 
         if size * size < total_area * 2 {
@@ -120,7 +126,7 @@ struct VelloContextInner {
     renderer: Renderer,
     atlas: Option<VelloAtlas>,
     atlas_texture: Texture,
-    has_renderered_this_frame: bool,
+    has_rendered_this_frame: bool,
 }
 
 #[derive(Resource)]
@@ -130,26 +136,24 @@ pub struct VelloContext {
 
 impl VelloContext {
     pub fn reset_renderer(&self) {
-        self.inner.lock().unwrap().has_renderered_this_frame = false;
+        self.inner.lock().unwrap().has_rendered_this_frame = false;
     }
 }
 
 impl FromWorld for VelloContext {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
-        let queue = world.resource::<RenderQueue>();
 
         Self {
             inner: Arc::new(Mutex::new(VelloContextInner {
                 renderer: Renderer::new(
                     device.wgpu_device(),
-                    &RendererOptions {
-                        surface_format: None,
-                        timestamp_period: queue.get_timestamp_period(),
-                        use_cpu: false,
+                    RendererOptions {
+                        antialiasing_support: AaSupport::area_only(),
+                        ..Default::default()
                     },
                 )
-                .expect("failed to crate Vello renderer"),
+                .expect("Failed to create Vello renderer."),
                 atlas: None,
                 atlas_texture: device.create_texture(&TextureDescriptor {
                     label: None,
@@ -161,7 +165,7 @@ impl FromWorld for VelloContext {
                     usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
                     view_formats: &[],
                 }),
-                has_renderered_this_frame: false,
+                has_rendered_this_frame: false,
             })),
         }
     }
@@ -170,10 +174,6 @@ impl FromWorld for VelloContext {
 #[derive(Debug, Default)]
 pub struct VelloNode {
     scene_entities: Vec<Entity>,
-}
-
-impl VelloNode {
-    pub const NAME: &'static str = "vello";
 }
 
 impl Node for VelloNode {
@@ -186,17 +186,21 @@ impl Node for VelloNode {
         let context = world.resource::<VelloContext>().inner.clone();
         let mut context = context.lock().unwrap();
 
-        if context.has_renderered_this_frame {
+        if context.has_rendered_this_frame {
+            return Ok(());
+        }
+
+        if self.scene_entities.is_empty() {
+            context.has_rendered_this_frame = true;
             return Ok(());
         }
 
         let device = render_context.render_device();
         let queue = world.resource::<RenderQueue>();
-        let gpu_images = world.resource::<RenderAssets<Image>>();
+        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
         let atlas = context.atlas.as_ref().unwrap();
 
         let mut scene = vello::Scene::default();
-        let mut builder = SceneBuilder::for_scene(&mut scene);
         let mut max_size = (0, 0);
 
         for (entity, VelloScene { fragment, .. }) in self
@@ -206,7 +210,7 @@ impl Node for VelloNode {
             .filter_map(|e| world.get::<VelloScene>(e).map(|s| (e, s)))
         {
             let rect = atlas.get(entity);
-            builder.append(
+            scene.append(
                 fragment,
                 Some(Affine::translate((rect.min.x as f64, rect.min.y as f64))),
             );
@@ -230,9 +234,10 @@ impl Node for VelloNode {
                     base_color: vello::peniko::Color::TRANSPARENT,
                     width: max_size.0,
                     height: max_size.1,
+                    antialiasing_method: AaConfig::Area,
                 },
             )
-            .expect("failed to render with Vello");
+            .expect("Failed to render with Vello.");
 
         let atlas = context.atlas.as_ref().unwrap();
 
@@ -242,11 +247,11 @@ impl Node for VelloNode {
             .copied()
             .filter_map(|e| world.get::<VelloScene>(e).map(|s| (e, s)))
         {
-            let gpu_image = gpu_images.get(image_handle).unwrap();
+            let gpu_image = gpu_images.get(image_handle.id()).unwrap();
             let rect = atlas.get(entity);
 
             render_context.command_encoder().copy_texture_to_texture(
-                ImageCopyTexture {
+                TexelCopyTextureInfo {
                     texture: &context.atlas_texture,
                     mip_level: 0,
                     origin: Origin3d {
@@ -256,17 +261,17 @@ impl Node for VelloNode {
                     },
                     aspect: TextureAspect::All,
                 },
-                ImageCopyTexture {
+                TexelCopyTextureInfo {
                     texture: &gpu_image.texture,
                     mip_level: 0,
                     origin: Origin3d::ZERO,
                     aspect: TextureAspect::All,
                 },
-                gpu_image.texture.size(),
+                gpu_image.size,
             );
         }
 
-        context.has_renderered_this_frame = true;
+        context.has_rendered_this_frame = true;
 
         Ok(())
     }
@@ -275,7 +280,7 @@ impl Node for VelloNode {
         let context = world.resource::<VelloContext>().inner.clone();
         let mut context = context.lock().unwrap();
 
-        if context.has_renderered_this_frame {
+        if context.has_rendered_this_frame {
             return;
         }
 

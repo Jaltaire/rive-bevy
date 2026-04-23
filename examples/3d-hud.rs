@@ -3,26 +3,29 @@
 
 use std::borrow::Cow;
 
+mod common;
+
 use bevy::{
-    core_pipeline::bloom::{BloomCompositeMode, BloomPrefilterSettings, BloomSettings},
-    pbr::NotShadowCaster,
+    light::NotShadowCaster,
+    post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
     prelude::*,
     render::render_resource::Extent3d,
-    window,
 };
+use common::close_on_esc;
 
 use rive_bevy::{MeshEntity, RivePlugin, SceneTarget, StateMachine};
 
 fn main() {
     App::new()
-        .insert_resource(AmbientLight {
+        .insert_resource(GlobalAmbientLight {
             color: Color::WHITE,
             brightness: 1.0 / 5.0f32,
+            affects_lightmapped_meshes: true,
         })
         .add_plugins(DefaultPlugins)
         .add_plugins(RivePlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, window::close_on_esc)
+        .add_systems(Update, close_on_esc)
         .add_systems(Update, camera_control_system)
         .run();
 }
@@ -34,12 +37,11 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Plane::from_size(50.0).into()),
-        material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
-        transform: Transform::from_xyz(0.0, -5.0, 0.0),
-        ..default()
-    });
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(50.0, 50.0))),
+        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.3, 0.3))),
+        Transform::from_xyz(0.0, -5.0, 0.0),
+    ));
 
     let mut rive_image = Image::default();
 
@@ -51,7 +53,7 @@ fn setup(
 
     let rive_image_handle = images.add(rive_image);
 
-    let plane_handle = meshes.add(Mesh::from(shape::Quad::new(Vec2::new(19.20, 10.80))));
+    let plane_handle = meshes.add(Rectangle::new(19.20, 10.80));
 
     let material_handle = materials.add(StandardMaterial {
         base_color_texture: Some(rive_image_handle.clone()),
@@ -63,12 +65,11 @@ fn setup(
     });
 
     let plane_entity = commands
-        .spawn(PbrBundle {
-            mesh: plane_handle,
-            material: material_handle,
-            transform: Transform::from_xyz(0.0, 0.5, 0.05),
-            ..default()
-        })
+        .spawn((
+            Mesh3d(plane_handle),
+            MeshMaterial3d(material_handle),
+            Transform::from_xyz(0.0, 0.5, 0.05),
+        ))
         .id();
 
     commands
@@ -78,7 +79,7 @@ fn setup(
             ..default()
         })
         .insert(SceneTarget {
-            image: rive_image_handle,
+            image: rive_image_handle.into(),
             // Adding the mesh here enables mouse input being passed to the Scene.
             mesh: MeshEntity {
                 entity: Some(plane_entity),
@@ -87,97 +88,77 @@ fn setup(
         });
 
     // opaque sphere
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(
-            Mesh::try_from(shape::Icosphere {
-                radius: 2.0,
-                subdivisions: 3,
-            })
-            .unwrap(),
-        ),
-        material: materials.add(Color::rgb(0.7, 0.2, 0.1).into()),
-        transform: Transform::from_xyz(0.0, 0.5, -5.5),
-        ..default()
-    });
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(2.0).mesh().ico(3).unwrap())),
+        MeshMaterial3d(materials.add(Color::srgb(0.7, 0.2, 0.1))),
+        Transform::from_xyz(0.0, 0.5, -5.5),
+    ));
 
     // light
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
+    commands.spawn((
+        PointLight {
             intensity: 10000.0,
             range: 40.0,
             // radius: 10.0,
             shadows_enabled: true,
             ..default()
         },
-        transform: Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::new(0.0, 0.0, 1.0), Vec3::X),
-        ..default()
-    });
+        Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::new(0.0, 0.0, 1.0), Vec3::X),
+    ));
 
     // sky
     commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(Mesh::from(shape::Box::default())),
-            material: materials.add(StandardMaterial {
-                base_color: Color::hex("333333").unwrap(),
-                unlit: true,
-                cull_mode: None,
-                ..default()
-            }),
-            transform: Transform::from_scale(Vec3::splat(200.0)),
+        Mesh3d(meshes.add(Cuboid::default())),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 0.2, 0.2),
+            unlit: true,
+            cull_mode: None,
             ..default()
-        },
+        })),
+        Transform::from_scale(Vec3::splat(200.0)),
         NotShadowCaster,
     ));
 
     // camera
     commands.spawn((
-        Camera3dBundle {
-            camera: Camera {
-                hdr: true, // 1. HDR is required for bloom
-                ..default()
-            },
-            transform: Transform::from_xyz(-4.0, 1.0, 15.0)
-                .looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
-
-            ..default()
-        },
-        BloomSettings {
+        Camera3d::default(),
+        Transform::from_xyz(-4.0, 1.0, 15.0).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
+        Bloom {
             intensity: 0.2,
             low_frequency_boost: 0.7,
             low_frequency_boost_curvature: 0.95,
             high_pass_frequency: 1.0,
-            prefilter_settings: BloomPrefilterSettings {
+            prefilter: BloomPrefilter {
                 threshold: 0.6,
                 threshold_softness: 0.2,
             },
             composite_mode: BloomCompositeMode::Additive,
+            ..default()
         },
     ));
 }
 
 fn camera_control_system(
-    mut camera: Query<(&mut Camera, &mut Transform, &GlobalTransform), With<Camera3d>>,
+    mut camera: Query<&mut Transform, With<Camera3d>>,
     time: Res<Time>,
-    input: Res<Input<KeyCode>>,
+    input: Res<ButtonInput<KeyCode>>,
 ) {
-    let (mut camera, mut camera_transform, _) = camera.single_mut();
+    let Ok(mut camera_transform) = camera.single_mut() else {
+        return;
+    };
 
-    if input.just_pressed(KeyCode::H) {
-        camera.hdr = !camera.hdr;
-    }
-
-    let rotation = if input.pressed(KeyCode::Left) {
-        time.delta_seconds()
-    } else if input.pressed(KeyCode::Right) {
-        -time.delta_seconds()
+    let rotation = if input.pressed(KeyCode::ArrowLeft) {
+        time.delta_secs()
+    } else if input.pressed(KeyCode::ArrowRight) {
+        -time.delta_secs()
     } else {
         0.0
     };
 
-    let movement = if input.pressed(KeyCode::Up) {
-        -time.delta_seconds()
-    } else if input.pressed(KeyCode::Down) {
-        time.delta_seconds()
+    let movement = if input.pressed(KeyCode::ArrowUp) {
+        -time.delta_secs()
+    } else if input.pressed(KeyCode::ArrowDown) {
+        time.delta_secs()
     } else {
         0.0
     };

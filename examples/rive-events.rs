@@ -1,19 +1,25 @@
 //! An example showcasing how to receive events from a Rive state machine.
 
-use bevy::{prelude::*, render::render_resource::Extent3d, window};
+mod common;
+
+use bevy::{prelude::*, render::render_resource::Extent3d};
+use common::close_on_esc;
 use rive_bevy::{
     rive_rs::state_machine::Property, GenericEvent, RivePlugin, SceneTarget, SpriteEntity,
     StateMachine,
 };
+
+#[derive(Component)]
+struct RatingText;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(AssetPlugin::default()))
         .add_plugins(RivePlugin)
         .add_systems(Startup, (setup_animation, setup_text))
-        .add_systems(Update, window::close_on_esc)
+        .add_systems(Update, close_on_esc)
         .add_systems(Update, receive_rive_events_system)
-        .run()
+        .run();
 }
 
 fn setup_animation(
@@ -31,21 +37,19 @@ fn setup_animation(
 
     let animation_image_handle = images.add(animation_image.clone());
 
-    commands.spawn(Camera2dBundle {
-        camera: Camera {
+    commands.spawn((
+        Camera2d,
+        Camera {
             order: 1,
             ..default()
         },
-        ..default()
-    });
+    ));
 
     let sprite_entity = commands
-        .spawn(SpriteBundle {
-            texture: animation_image_handle.clone(),
-            transform: Transform::from_scale(Vec3::splat(0.5))
-                .with_translation(Vec3::new(0.0, 0.0, 0.0)),
-            ..default()
-        })
+        .spawn((
+            Sprite::from_image(animation_image_handle.clone()),
+            Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(0.0, 0.0, 0.0)),
+        ))
         .id();
 
     let state_machine = StateMachine {
@@ -58,7 +62,7 @@ fn setup_animation(
     };
 
     commands.spawn(state_machine).insert(SceneTarget {
-        image: animation_image_handle,
+        image: animation_image_handle.into(),
         sprite: SpriteEntity {
             entity: Some(sprite_entity),
         },
@@ -67,34 +71,27 @@ fn setup_animation(
 }
 
 fn setup_text(mut commands: Commands) {
-    commands.spawn(
-        TextBundle::from_sections([
-            TextSection::new(
-                "Rating: ",
-                TextStyle {
-                    font_size: 32.0,
-                    color: Color::BLACK,
-                    ..default()
-                },
-            ),
-            TextSection::from_style(TextStyle {
+    commands
+        .spawn((
+            Text::new("Rating: "),
+            TextFont {
                 font_size: 32.0,
-                color: Color::BLACK,
                 ..default()
-            }),
-        ])
-        .with_style(Style {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        }),
-    );
+            },
+            TextColor(Color::BLACK),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                left: Val::Px(10.0),
+                ..default()
+            },
+        ))
+        .with_child((TextSpan::default(), RatingText));
 }
 
 fn receive_rive_events_system(
-    mut rive_event: EventReader<GenericEvent>,
-    mut text_query: Query<&mut Text>,
+    mut rive_event: MessageReader<GenericEvent>,
+    mut text_query: Query<&mut TextSpan, With<RatingText>>,
 ) {
     for event in rive_event.read() {
         info!("Rive event: {:?}", event);
@@ -104,8 +101,10 @@ fn receive_rive_events_system(
             if let Some(Property::Number(rating)) = event.properties.get("rating") {
                 info!("Rating: {:?}", rating);
 
-                let mut text = text_query.single_mut();
-                text.sections[1].value = rating.to_string();
+                let Ok(mut text) = text_query.single_mut() else {
+                    return;
+                };
+                text.0 = rating.to_string();
             }
         }
     }

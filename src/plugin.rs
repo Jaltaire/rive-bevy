@@ -1,14 +1,16 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use bevy::{
-    core_pipeline::{core_2d, core_3d},
-    ecs::query::BatchingStrategy,
+    core_pipeline::{
+        core_2d::graph::{Core2d, Node2d},
+        core_3d::graph::{Core3d, Node3d},
+    },
+    ecs::batching::BatchingStrategy,
     prelude::*,
     render::{
-        extract_component::ExtractComponentPlugin, render_graph::RenderGraphApp, Render, RenderApp,
-        RenderSet,
+        extract_component::ExtractComponentPlugin, render_graph::RenderGraphExt, Render, RenderApp,
+        RenderSystems,
     },
-    utils::HashMap,
 };
 use rive_rs::Instantiate;
 
@@ -16,7 +18,7 @@ use crate::{
     assets::{self, Riv, RivLoader},
     components::{
         LinearAnimation, MissingArtboard, MissingLinearAnimation, MissingStateMachine,
-        RiveLinearAnimation, RiveStateMachine, StateMachine, VelloFragment, VelloScene, Viewport,
+        RiveLinearAnimation, RiveStateMachine, SceneImage, StateMachine, VelloFragment, Viewport,
     },
     events::{GenericEvent, Input, InputValue},
     node, pointer_events,
@@ -54,7 +56,7 @@ macro_rules! get_or_continue_with_error {
 fn insert_deafult_viewports(
     mut commands: Commands,
     query: Query<
-        (Entity, &Handle<Image>),
+        (Entity, &SceneImage),
         (
             Or<(Added<LinearAnimation>, Added<StateMachine>)>,
             Without<Viewport>,
@@ -65,7 +67,7 @@ fn insert_deafult_viewports(
     for (entity, image_handle) in &query {
         let mut viewport = Viewport::default();
 
-        if let Some(image) = image_assets.get(image_handle) {
+        if let Some(image) = image_assets.get(&image_handle.0) {
             let size = image.size();
             viewport.resize(size.x, size.y);
         }
@@ -75,11 +77,11 @@ fn insert_deafult_viewports(
 }
 
 fn resize_viewports(
-    mut query: Query<(&mut Viewport, &Handle<Image>)>,
+    mut query: Query<(&mut Viewport, &SceneImage)>,
     image_assets: Res<Assets<Image>>,
 ) {
     for (mut viewport, image_handle) in &mut query {
-        if let Some(image) = image_assets.get(image_handle) {
+        if let Some(image) = image_assets.get(&image_handle.0) {
             let size = image.size();
             viewport.resize(size.x, size.y);
         }
@@ -222,7 +224,7 @@ fn instantiate_state_machines(
 
 fn reinstantiate_linear_animations(
     mut commands: Commands,
-    mut asset_events: EventReader<AssetEvent<assets::Riv>>,
+    mut asset_events: MessageReader<AssetEvent<assets::Riv>>,
     mut riv_entities: ResMut<RivEntities>,
 ) {
     for event in asset_events.read() {
@@ -243,7 +245,7 @@ fn reinstantiate_linear_animations(
 
 fn pass_state_machine_input_events(
     mut query: Query<&mut RiveStateMachine>,
-    mut input_events: EventReader<Input>,
+    mut input_events: MessageReader<Input>,
 ) {
     for input in input_events.read() {
         if let Ok(state_machine) = query.get_mut(input.state_machine) {
@@ -309,16 +311,16 @@ fn render_rive_scenes(
 
 fn send_generic_events(
     query: Query<(Entity, &RiveStateMachine)>,
-    mut generic_events: EventWriter<GenericEvent>,
+    mut generic_events: MessageWriter<GenericEvent>,
 ) {
     for (entity, state_machine) in &query {
         for event in state_machine.events() {
-            generic_events.send(GenericEvent {
+            generic_events.write(GenericEvent {
                 state_machine: entity,
                 name: event.name,
                 delay: event.delay,
                 properties: event.properties,
-            })
+            });
         }
     }
 }
@@ -333,8 +335,8 @@ impl Plugin for RivePlugin {
         app.init_asset::<Riv>()
             .init_asset_loader::<RivLoader>()
             .init_resource::<RivEntities>()
-            .add_event::<Input>()
-            .add_event::<GenericEvent>()
+            .add_message::<Input>()
+            .add_message::<GenericEvent>()
             .add_systems(
                 PreUpdate,
                 (
@@ -354,26 +356,20 @@ impl Plugin for RivePlugin {
                 )
                     .chain(),
             )
-            .add_plugins(ExtractComponentPlugin::<VelloScene>::default());
+            .add_plugins(ExtractComponentPlugin::<VelloFragment>::default());
     }
 
     fn finish(&self, app: &mut App) {
-        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
         render_app
             .init_resource::<node::VelloContext>()
-            .add_systems(Render, reset_renderer.in_set(RenderSet::Cleanup))
-            .add_render_graph_node::<node::VelloNode>(core_2d::graph::NAME, node::VelloNode::NAME)
-            .add_render_graph_edges(
-                core_2d::graph::NAME,
-                &[node::VelloNode::NAME, core_2d::graph::node::MAIN_PASS],
-            )
-            .add_render_graph_node::<node::VelloNode>(core_3d::graph::NAME, node::VelloNode::NAME)
-            .add_render_graph_edges(
-                core_3d::graph::NAME,
-                &[node::VelloNode::NAME, core_3d::graph::node::START_MAIN_PASS],
-            );
+            .add_systems(Render, reset_renderer.in_set(RenderSystems::Cleanup))
+            .add_render_graph_node::<node::VelloNode>(Core2d, node::VelloNodeLabel::Vello)
+            .add_render_graph_edges(Core2d, (node::VelloNodeLabel::Vello, Node2d::StartMainPass))
+            .add_render_graph_node::<node::VelloNode>(Core3d, node::VelloNodeLabel::Vello)
+            .add_render_graph_edges(Core3d, (node::VelloNodeLabel::Vello, Node3d::StartMainPass));
     }
 }

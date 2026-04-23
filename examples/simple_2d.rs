@@ -1,6 +1,9 @@
 //! An example drawing a Rive animation (State Machine) on to a 2d sprite - with mouse inputs.
 
-use bevy::{prelude::*, render::render_resource::Extent3d, window};
+mod common;
+
+use bevy::{prelude::*, render::render_resource::Extent3d};
+use common::close_on_esc;
 use rive_bevy::{RivePlugin, SceneTarget, SpriteEntity, StateMachine};
 
 fn main() {
@@ -8,8 +11,8 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(RivePlugin)
         .add_systems(Startup, setup_animation)
-        .add_systems(Update, window::close_on_esc)
-        .run()
+        .add_systems(Update, close_on_esc)
+        .run();
 }
 
 fn setup_animation(
@@ -28,14 +31,13 @@ fn setup_animation(
 
     let animation_image_handle = images.add(animation_image.clone());
 
-    commands.spawn(Camera2dBundle { ..default() });
+    commands.spawn(Camera2d);
 
     let sprite_entity = commands
-        .spawn(SpriteBundle {
-            texture: animation_image_handle.clone(),
-            transform: Transform::from_scale(Vec3::splat(1.0)),
-            ..default()
-        })
+        .spawn((
+            Sprite::from_image(animation_image_handle.clone()),
+            Transform::from_scale(Vec3::splat(1.0)),
+        ))
         .id();
 
     let linear_animation = StateMachine {
@@ -48,7 +50,7 @@ fn setup_animation(
     };
 
     commands.spawn(linear_animation).insert(SceneTarget {
-        image: animation_image_handle,
+        image: animation_image_handle.into(),
         // Adding the sprite here enables mouse input being passed to the Scene.
         sprite: SpriteEntity {
             entity: Some(sprite_entity),

@@ -13,13 +13,15 @@ license = "MIT"
 readme = "../README.md"
 
 [dependencies]
-bevy = "0.12.0"
+bevy = "0.18.1"
 etagere = "0.2.8"
-rive-rs = { git = "https://github.com/rive-app/rive-rs", features = ["vello"] }
-vello = { git = "https://github.com/linebender/vello", rev = "ee3a076" }
+rive-rs = { git = "https://github.com/Jaltaire/rive-rs", branch = "codex/vello-0.7", default-features = false, features = ["vello"] }
+thiserror = "2.0"
+vello = "0.7.0"
 
 [dev-dependencies]
 rand = "0.8.5"
+
 
 [profile.dev]
 opt-level = 1

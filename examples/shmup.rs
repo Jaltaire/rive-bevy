@@ -5,10 +5,10 @@
 
 use std::time::Duration;
 
-use bevy::{
-    core_pipeline::bloom::BloomSettings, prelude::*, render::render_resource::Extent3d,
-    sprite::collide_aabb::collide, sprite::MaterialMesh2dBundle, window,
-};
+mod common;
+
+use bevy::{post_process::bloom::Bloom, prelude::*, render::render_resource::Extent3d};
+use common::close_on_esc;
 
 use rand::prelude::*;
 
@@ -17,8 +17,8 @@ use rive_bevy::{
     StateMachine,
 };
 
-// const BACKGROUND_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
-const BACKGROUND_COLOR: Color = Color::rgb(0.023, 0.0, 0.102);
+// const BACKGROUND_COLOR: Color = Color::srgb(0.0, 0.0, 0.0);
+const BACKGROUND_COLOR: Color = Color::srgb(0.023, 0.0, 0.102);
 
 // SIZING
 const WINDOW_SIZE: Vec2 = Vec2::new(1500.0, 1000.0);
@@ -51,7 +51,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                resolution: WINDOW_SIZE.into(),
+                resolution: (WINDOW_SIZE.x as u32, WINDOW_SIZE.y as u32).into(),
                 title: "SHMUP".to_string(),
                 ..default()
             }),
@@ -61,7 +61,7 @@ fn main() {
         .init_resource::<EnemyMoveTimer>()
         .insert_resource(ClearColor(BACKGROUND_COLOR))
         .add_systems(Startup, setup)
-        .add_systems(Update, window::close_on_esc)
+        .add_systems(Update, close_on_esc)
         .add_systems(
             FixedUpdate,
             (
@@ -86,7 +86,7 @@ fn main() {
                 move_to_target_position_system,
             ),
         )
-        .add_systems(Update, window::close_on_esc)
+        .add_systems(Update, close_on_esc)
         .run();
 }
 
@@ -183,24 +183,15 @@ impl Default for EnemyShootTimer {
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    meshes: ResMut<Assets<Mesh>>,
-    materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
     // Camera
-    commands.spawn((
-        Camera2dBundle {
-            camera: Camera {
-                hdr: true,
-                ..default()
-            },
-            ..default()
-        },
-        BloomSettings::OLD_SCHOOL,
-    ));
+    commands.spawn((Camera2d, Bloom::OLD_SCHOOL));
 
     // Background
-    spawn_background(&mut commands, meshes, materials);
+    spawn_background(&mut commands, &mut meshes, &mut materials);
 
     // Player
     {
@@ -222,28 +213,27 @@ fn setup(
 
         let player_entity = commands
             .spawn((
-                SpriteBundle {
-                    texture: rect_image_handle.clone(),
-                    transform: Transform::from_scale(Vec3::new(0.5, 0.5, 1.0))
-                        .with_translation(Vec3::new(0.0, player_y, 0.0)),
-                    ..default()
-                },
+                Sprite::from_image(rect_image_handle.clone()),
+                Transform::from_scale(Vec3::new(0.5, 0.5, 1.0))
+                    .with_translation(Vec3::new(0.0, player_y, 0.0)),
                 Player::default(),
                 Collider {
                     size: PLAYER_COLIDER_SIZE,
                 },
-                sm,
             ))
             .id();
 
-        commands.spawn(SceneTarget {
-            image: rect_image_handle,
-            // Adding the sprite here enables mouse input being passed to the Scene.
-            sprite: SpriteEntity {
-                entity: Some(player_entity),
+        commands.entity(player_entity).insert((
+            sm,
+            SceneTarget {
+                image: rect_image_handle.into(),
+                // Adding the sprite here enables mouse input being passed to the Scene.
+                sprite: SpriteEntity {
+                    entity: Some(player_entity),
+                },
+                ..default()
             },
-            ..default()
-        });
+        ));
     }
 
     let center_y = (WINDOW_SIZE.y - ENEMY_AREA.y) / 2.0;
@@ -297,12 +287,9 @@ fn setup(
             // enemy spawn
             let sprite_entity = commands
                 .spawn((
-                    SpriteBundle {
-                        texture: enemy_image_handle.clone(),
-                        transform: Transform::from_scale(Vec3::new(0.5, 0.5, 1.0))
-                            .with_translation(enemy_position.extend(0.0)),
-                        ..default()
-                    },
+                    Sprite::from_image(enemy_image_handle.clone()),
+                    Transform::from_scale(Vec3::new(0.5, 0.5, 1.0))
+                        .with_translation(enemy_position.extend(0.0)),
                     Enemy::default(),
                     TargetPosition {
                         position: enemy_position,
@@ -311,27 +298,31 @@ fn setup(
                         size: ENEMY_COLIDER_SIZE,
                     },
                     EnemyShootTimer::default(),
-                    state_machine,
                 ))
                 .id();
 
-            commands.spawn(SceneTarget {
-                image: enemy_image_handle,
-                sprite: SpriteEntity {
-                    entity: Some(sprite_entity),
+            commands.entity(sprite_entity).insert((
+                state_machine,
+                SceneTarget {
+                    image: enemy_image_handle.into(),
+                    sprite: SpriteEntity {
+                        entity: Some(sprite_entity),
+                    },
+                    ..default()
                 },
-                ..default()
-            });
+            ));
         }
     }
 }
 
 fn player_movement_system(
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Transform, &mut Player)>,
     time_step: Res<Time>,
 ) {
-    let (mut player_transform, mut player) = query.single_mut();
+    let Ok((mut player_transform, mut player)) = query.single_mut() else {
+        return;
+    };
 
     if !player.is_alive {
         return;
@@ -340,11 +331,11 @@ fn player_movement_system(
     let mut direction = 0.0;
     player.target_drift = 0.0;
 
-    if keyboard_input.pressed(KeyCode::Left) {
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
         direction -= 1.0;
         player.target_drift = -100.0;
     }
-    if keyboard_input.pressed(KeyCode::Right) {
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
         direction += 1.0;
         player.target_drift = 100.0;
     }
@@ -384,18 +375,20 @@ fn instantiate_projectile_system(mut query: Query<&mut RiveStateMachine, Added<E
 
 fn player_control_system(
     mut commands: Commands,
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     query: Query<(Entity, &Transform, &Player)>,
-    mut input_events: EventWriter<events::Input>,
+    mut input_events: MessageWriter<events::Input>,
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
 ) {
     if keys.just_pressed(KeyCode::Space) {
-        let (entity, transform, player) = query.single();
+        let Ok((entity, transform, player)) = query.single() else {
+            return;
+        };
         if !player.is_alive {
             return;
         }
-        input_events.send(events::Input {
+        input_events.write(events::Input {
             state_machine: entity,
             name: "shoot".into(),
             value: events::InputValue::Trigger,
@@ -418,19 +411,15 @@ fn player_control_system(
 
         let projectile_entity = commands
             .spawn((
-                SpriteBundle {
-                    texture: rect_image_handle.clone(),
-                    transform: Transform {
-                        scale: Vec3::new(1.0, 1.0, 1.0),
-                        translation: transform.translation
-                            + Vec3::new(0.0, PLAYER_SIZE.y / 2.0, 0.0),
-                        ..default()
-                    },
-                    sprite: Sprite {
-                        color: Color::rgb(4.0, 4.0, 6.0), // 4. Put something bright in a dark environment to see the effect
-                        custom_size: Some(PROJECTILE_SIZE * 2.0),
-                        ..default()
-                    },
+                Sprite {
+                    image: rect_image_handle.clone(),
+                    color: Color::srgb(4.0, 4.0, 6.0), // 4. Put something bright in a dark environment to see the effect
+                    custom_size: Some(PROJECTILE_SIZE * 2.0),
+                    ..default()
+                },
+                Transform {
+                    scale: Vec3::new(1.0, 1.0, 1.0),
+                    translation: transform.translation + Vec3::new(0.0, PLAYER_SIZE.y / 2.0, 0.0),
                     ..default()
                 },
                 PlayerProjectile,
@@ -438,18 +427,20 @@ fn player_control_system(
                     size: PROJECTILE_SIZE,
                 },
                 Velocity(PLAYER_PROJECTILE_DIRECTION * PROJECTILE_SPEED),
-                state_machine,
             ))
             .id();
 
-        commands.spawn(SceneTarget {
-            image: rect_image_handle,
-            // Adding the sprite here enables mouse input being passed to the Scene.
-            sprite: SpriteEntity {
-                entity: Some(projectile_entity),
+        commands.entity(projectile_entity).insert((
+            state_machine,
+            SceneTarget {
+                image: rect_image_handle.into(),
+                // Adding the sprite here enables mouse input being passed to the Scene.
+                sprite: SpriteEntity {
+                    entity: Some(projectile_entity),
+                },
+                ..default()
             },
-            ..default()
-        });
+        ));
     }
 }
 
@@ -472,19 +463,19 @@ fn collision_system(
     player_projectiles: Query<(Entity, &Transform), With<PlayerProjectile>>,
     enemy_projectiles: Query<(Entity, &Transform), With<EnemyProjectile>>,
     mut player_query: Query<(Entity, &Transform, &Collider, &mut Player)>,
-    mut input_events: EventWriter<events::Input>,
+    mut input_events: MessageWriter<events::Input>,
 ) {
     // Enemy projectiles on player
     for (projectile_entity, transform) in &enemy_projectiles {
         for (player_entity, player_transform, collider, mut player) in player_query.iter_mut() {
-            let collision = collide(
+            let collision = overlaps(
                 transform.translation,
                 PROJECTILE_SIZE,
                 player_transform.translation,
                 collider.size,
             );
 
-            if collision.is_some() {
+            if collision {
                 if !player.is_alive {
                     continue; // player already destroyed, waiting to despawn
                 }
@@ -493,7 +484,7 @@ fn collision_system(
                 commands.entity(projectile_entity).despawn();
 
                 // Send explosition input to player state machine.
-                input_events.send(events::Input {
+                input_events.write(events::Input {
                     state_machine: player_entity,
                     name: "explosion".into(),
                     value: events::InputValue::Trigger,
@@ -507,14 +498,14 @@ fn collision_system(
         for (enemy_entity, enemy_transform, collider, mut enemy, mut target_position) in
             enemy_query.iter_mut()
         {
-            let collision = collide(
+            let collision = overlaps(
                 transform.translation,
                 PROJECTILE_SIZE,
                 enemy_transform.translation,
                 collider.size,
             );
 
-            if collision.is_some() {
+            if collision {
                 if !enemy.is_alive {
                     continue; // enemy already destroyed, waiting to despawn
                 }
@@ -528,7 +519,7 @@ fn collision_system(
                     .insert(EnemyDespawnTimer::default());
 
                 // Set enemy state machine input to isAlive = false.
-                input_events.send(events::Input {
+                input_events.write(events::Input {
                     state_machine: enemy_entity,
                     name: "isAlive".into(),
                     value: events::InputValue::Bool(false),
@@ -538,18 +529,23 @@ fn collision_system(
     }
 }
 
+fn overlaps(a_position: Vec3, a_size: Vec2, b_position: Vec3, b_size: Vec2) -> bool {
+    let distance = (a_position - b_position).truncate().abs();
+    distance.x <= (a_size.x + b_size.x) / 2.0 && distance.y <= (a_size.y + b_size.y) / 2.0
+}
+
 fn enemies_shoot_system(
     mut commands: Commands,
     mut enemy_query: Query<(Entity, &mut EnemyShootTimer, &Transform)>,
     mut images: ResMut<Assets<Image>>,
-    mut input_events: EventWriter<events::Input>,
+    mut input_events: MessageWriter<events::Input>,
     asset_server: Res<AssetServer>,
     time: Res<Time>,
 ) {
     for (enemy_entity, mut enemy_shoot_timer, transform) in &mut enemy_query.iter_mut() {
         enemy_shoot_timer.tick(time.delta());
 
-        if enemy_shoot_timer.finished() {
+        if enemy_shoot_timer.just_finished() {
             let random_time = rand::thread_rng().gen_range(2..10) as f32;
             enemy_shoot_timer.0 = Timer::from_seconds(random_time, TimerMode::Once);
             enemy_shoot_timer.reset();
@@ -571,19 +567,15 @@ fn enemies_shoot_system(
 
             let projectile = commands
                 .spawn((
-                    SpriteBundle {
-                        texture: rect_image_handle.clone(),
-                        transform: Transform {
-                            scale: Vec3::new(1.0, 1.0, 1.0),
-
-                            translation: transform.translation,
-                            ..default()
-                        },
-                        sprite: Sprite {
-                            color: Color::rgb(4.0, 4.0, 6.0), // 4. Put something bright in a dark environment to see the effect
-                            custom_size: Some(PROJECTILE_SIZE * 2.0),
-                            ..default()
-                        },
+                    Sprite {
+                        image: rect_image_handle.clone(),
+                        color: Color::srgb(4.0, 4.0, 6.0), // 4. Put something bright in a dark environment to see the effect
+                        custom_size: Some(PROJECTILE_SIZE * 2.0),
+                        ..default()
+                    },
+                    Transform {
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        translation: transform.translation,
                         ..default()
                     },
                     EnemyProjectile,
@@ -591,21 +583,23 @@ fn enemies_shoot_system(
                         size: PROJECTILE_SIZE,
                     },
                     Velocity(ENEMY_PROJECTILE_DIRECTION * PROJECTILE_SPEED),
-                    state_machine,
                 ))
                 .id();
 
-            commands.spawn(SceneTarget {
-                image: rect_image_handle,
-                // Adding the sprite here enables mouse input being passed to the Scene.
-                sprite: SpriteEntity {
-                    entity: Some(projectile),
+            commands.entity(projectile).insert((
+                state_machine,
+                SceneTarget {
+                    image: rect_image_handle.into(),
+                    // Adding the sprite here enables mouse input being passed to the Scene.
+                    sprite: SpriteEntity {
+                        entity: Some(projectile),
+                    },
+                    ..default()
                 },
-                ..default()
-            });
+            ));
 
             // Play shoot animation on enemy state machine.
-            input_events.send(events::Input {
+            input_events.write(events::Input {
                 state_machine: enemy_entity,
                 name: "Shoot".into(),
                 value: events::InputValue::Trigger,
@@ -622,10 +616,12 @@ fn move_enemies_over_time_system(
 ) {
     enemy_move_timer.tick(time.delta());
 
-    let (mut transform, mut spawn) = enemies_center.single_mut();
+    let Ok((mut transform, mut spawn)) = enemies_center.single_mut() else {
+        return;
+    };
     let moveable_space = WINDOW_SIZE - ENEMY_AREA;
 
-    if enemy_move_timer.finished() {
+    if enemy_move_timer.just_finished() {
         let mut new_position_offset: Vec2 = Vec2::new(0.0, -ENEMY_MOVE_DISTANCE);
         let right_edge_distance = (moveable_space.x / 2.0) - transform.translation.x;
         let left_edge_distance = (moveable_space.x / 2.0) + transform.translation.x;
@@ -660,15 +656,17 @@ fn move_to_target_position_system(
     for (mut transform, target_position) in &mut query {
         transform.translation = transform
             .translation
-            .lerp(target_position.position.extend(0.0), time.delta_seconds());
+            .lerp(target_position.position.extend(0.0), time.delta_secs());
     }
 }
 
 fn drift_player_ship_system(
     mut query: Query<(Entity, &mut Player)>,
-    mut input_events: EventWriter<events::Input>,
+    mut input_events: MessageWriter<events::Input>,
 ) {
-    let (entity, mut player) = query.single_mut();
+    let Ok((entity, mut player)) = query.single_mut() else {
+        return;
+    };
 
     let mut current_drift = lerp(player.drift, player.target_drift, 0.1);
 
@@ -677,7 +675,7 @@ fn drift_player_ship_system(
     player.drift = current_drift;
 
     // Send Rive input event to update the state machine's drift input.
-    input_events.send(events::Input {
+    input_events.write(events::Input {
         state_machine: entity,
         name: "drift".into(),
         value: events::InputValue::Number(player.drift),
@@ -691,7 +689,7 @@ fn despawn_dead_enemies_system(
 ) {
     for (entity, mut timer) in &mut query.iter_mut() {
         timer.tick(time.delta());
-        if timer.finished() {
+        if timer.is_finished() {
             commands.entity(entity).despawn();
         }
     }
@@ -736,34 +734,28 @@ fn despawn_out_of_frame_enemies_system(
 
 fn spawn_background(
     commands: &mut Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn((
-        MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::new(200.0).into()).into(),
-            material: materials.add(ColorMaterial::from(Color::rgb(7.5, 5.0, 7.5))),
-            transform: Transform::from_translation(Vec3::new(750.0, 500.0, -5.0)),
-            ..default()
-        },
+        Mesh2d(meshes.add(Circle::new(200.0))),
+        MeshMaterial2d(materials.add(ColorMaterial::from(Color::srgb(7.5, 5.0, 7.5)))),
+        Transform::from_translation(Vec3::new(750.0, 500.0, -5.0)),
         Velocity(Vec2::new(0.0, -4.0)),
     ));
 
     commands.spawn((
-        MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::new(190.0).into()).into(),
-            material: materials.add(ColorMaterial::from(Color::rgb(1.0, 6.0, 7.0))),
-            transform: Transform::from_translation(Vec3::new(-900.0, -500.0, -5.0)),
-            ..default()
-        },
+        Mesh2d(meshes.add(Circle::new(190.0))),
+        MeshMaterial2d(materials.add(ColorMaterial::from(Color::srgb(1.0, 6.0, 7.0)))),
+        Transform::from_translation(Vec3::new(-900.0, -500.0, -5.0)),
         Velocity(Vec2::new(0.0, -2.0)),
     ));
 
     let colors: Vec<Color> = vec![
-        Color::rgb(7.5, 5.0, 7.5),
-        Color::rgb(5.0, 7.5, 7.5),
-        Color::rgb(7.5, 7.5, 5.0),
-        Color::rgb(1.0, 1.0, 3.0),
+        Color::srgb(7.5, 5.0, 7.5),
+        Color::srgb(5.0, 7.5, 7.5),
+        Color::srgb(7.5, 7.5, 5.0),
+        Color::srgb(1.0, 1.0, 3.0),
     ];
 
     (0..100).for_each(|_| {
@@ -773,16 +765,15 @@ fn spawn_background(
         let color: Color = *colors.choose(&mut rand::thread_rng()).unwrap();
         let size = rand::thread_rng().gen_range(0.1..2.5);
 
-        commands.spawn(MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::new(size).into()).into(),
-            material: materials.add(ColorMaterial::from(color)),
-            transform: Transform::from_translation(Vec3::new(
+        commands.spawn((
+            Mesh2d(meshes.add(Circle::new(size))),
+            MeshMaterial2d(materials.add(ColorMaterial::from(color))),
+            Transform::from_translation(Vec3::new(
                 WINDOW_SIZE.x / 2. * x,
                 WINDOW_SIZE.y / 2. * y,
                 -5.0,
             )),
-            ..default()
-        });
+        ));
     });
 }
 
