@@ -75,7 +75,7 @@ fn setup_text(mut commands: Commands) {
     commands.spawn((
         Text::new("Update Rive state machine inputs and text"),
         TextFont {
-            font_size: 22.0,
+            font_size: FontSize::Px(22.0),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -90,7 +90,7 @@ fn setup_text(mut commands: Commands) {
     commands.spawn((
         Text::new("Press `Return` to toggle, then type to change text..."),
         TextFont {
-            font_size: 22.0,
+            font_size: FontSize::Px(22.0),
             ..default()
         },
         TextColor(Color::WHITE),

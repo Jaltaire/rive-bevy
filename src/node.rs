@@ -1,18 +1,14 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use bevy::{
     prelude::*,
     render::{
         render_asset::RenderAssets,
-        render_graph::{Node, RenderLabel},
         render_resource::{
             Extent3d, Origin3d, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor,
             TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         },
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::GpuImage,
     },
 };
@@ -21,32 +17,14 @@ use vello::{kurbo::Affine, AaConfig, AaSupport, RenderParams, Renderer, Renderer
 
 use crate::components::VelloScene;
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-pub enum VelloNodeLabel {
-    Vello,
-}
-
-struct Sizes<'w> {
-    world: &'w World,
-    query_state: QueryState<(Entity, &'static VelloScene), ()>,
-}
-
-impl Sizes<'_> {
-    pub fn iter(&mut self) -> impl Iterator<Item = (Entity, u32, u32)> + '_ {
-        self.query_state
-            .iter(self.world)
-            .map(|(e, s)| (e, s.width, s.height))
-    }
-}
-
 struct VelloAtlas {
     atlas_alloc: AtlasAllocator,
     alloc_ids: HashMap<Entity, AllocId>,
 }
 
 impl VelloAtlas {
-    fn required_size(sizes: &mut Sizes) -> u32 {
-        let total_area: u32 = sizes.iter().map(|(_, w, h)| w * h).sum();
+    fn required_size(sizes: &[(Entity, u32, u32)]) -> u32 {
+        let total_area: u32 = sizes.iter().map(|(_, width, height)| width * height).sum();
 
         let theoretical_min_size = (total_area.max(1) as f32).sqrt().ceil() as u32;
         let mut size = theoretical_min_size.next_power_of_two();
@@ -58,7 +36,7 @@ impl VelloAtlas {
         size
     }
 
-    pub fn new(sizes: &mut Sizes) -> Self {
+    fn new(sizes: &[(Entity, u32, u32)]) -> Self {
         let size = Self::required_size(sizes);
 
         Self {
@@ -67,11 +45,11 @@ impl VelloAtlas {
         }
     }
 
-    pub fn width(&self) -> u32 {
+    fn width(&self) -> u32 {
         self.atlas_alloc.size().width as _
     }
 
-    pub fn height(&self) -> u32 {
+    fn height(&self) -> u32 {
         self.atlas_alloc.size().height as _
     }
 
@@ -80,7 +58,7 @@ impl VelloAtlas {
         self.atlas_alloc = AtlasAllocator::new(Size2D::new(size as i32, size as i32));
     }
 
-    pub fn update_size(&mut self, sizes: &mut Sizes) {
+    fn update_size(&mut self, sizes: &[(Entity, u32, u32)]) {
         let required_size = Self::required_size(sizes);
         let current_size = self.atlas_alloc.size().width as u32;
         let current_area = current_size * current_size;
@@ -90,21 +68,23 @@ impl VelloAtlas {
         }
     }
 
-    pub fn allocate_all(&mut self, sizes: &mut Sizes) {
+    fn allocate_all(&mut self, sizes: &[(Entity, u32, u32)]) {
         let mut was_resized;
+
         loop {
             was_resized = false;
 
-            for (entity, width, height) in sizes.iter() {
-                if let std::collections::hash_map::Entry::Vacant(e) = self.alloc_ids.entry(entity) {
+            for (entity, width, height) in sizes {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.alloc_ids.entry(*entity)
+                {
                     if let Some(Allocation { id, .. }) = self
                         .atlas_alloc
-                        .allocate(Size2D::new(width as i32, height as i32))
+                        .allocate(Size2D::new(*width as i32, *height as i32))
                     {
-                        e.insert(id);
+                        entry.insert(id);
                     } else {
                         self.resize(2 * self.atlas_alloc.size().width as u32);
-
                         was_resized = true;
                         break;
                     }
@@ -117,9 +97,14 @@ impl VelloAtlas {
         }
     }
 
-    pub fn get(&self, entity: Entity) -> Rectangle {
+    fn get(&self, entity: Entity) -> Rectangle {
         self.atlas_alloc.get(self.alloc_ids[&entity])
     }
+}
+
+#[derive(Resource)]
+pub struct VelloContext {
+    inner: Mutex<VelloContextInner>,
 }
 
 struct VelloContextInner {
@@ -127,11 +112,6 @@ struct VelloContextInner {
     atlas: Option<VelloAtlas>,
     atlas_texture: Texture,
     has_rendered_this_frame: bool,
-}
-
-#[derive(Resource)]
-pub struct VelloContext {
-    inner: Arc<Mutex<VelloContextInner>>,
 }
 
 impl VelloContext {
@@ -145,7 +125,7 @@ impl FromWorld for VelloContext {
         let device = world.resource::<RenderDevice>();
 
         Self {
-            inner: Arc::new(Mutex::new(VelloContextInner {
+            inner: Mutex::new(VelloContextInner {
                 renderer: Renderer::new(
                     device.wgpu_device(),
                     RendererOptions {
@@ -166,168 +146,145 @@ impl FromWorld for VelloContext {
                     view_formats: &[],
                 }),
                 has_rendered_this_frame: false,
-            })),
+            }),
         }
     }
 }
 
-#[derive(Debug, Default)]
-pub struct VelloNode {
-    scene_entities: Vec<Entity>,
-}
+pub fn render_vello_scene_textures(
+    query: Query<(Entity, &VelloScene)>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    mut render_context: RenderContext,
+    context: Res<VelloContext>,
+) {
+    let mut context = context.inner.lock().unwrap();
 
-impl Node for VelloNode {
-    fn run(
-        &self,
-        _graph: &mut bevy::render::render_graph::RenderGraphContext,
-        render_context: &mut bevy::render::renderer::RenderContext,
-        world: &World,
-    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let context = world.resource::<VelloContext>().inner.clone();
-        let mut context = context.lock().unwrap();
+    if context.has_rendered_this_frame {
+        return;
+    }
 
-        if context.has_rendered_this_frame {
-            return Ok(());
-        }
-
-        if self.scene_entities.is_empty() {
-            context.has_rendered_this_frame = true;
-            return Ok(());
-        }
-
-        let device = render_context.render_device();
-        let queue = world.resource::<RenderQueue>();
-        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
-        let atlas = context.atlas.as_ref().unwrap();
-
-        let mut scene = vello::Scene::default();
-        let mut max_size = (0, 0);
-
-        for (entity, VelloScene { fragment, .. }) in self
-            .scene_entities
-            .iter()
-            .copied()
-            .filter_map(|e| world.get::<VelloScene>(e).map(|s| (e, s)))
-        {
-            let rect = atlas.get(entity);
-            scene.append(
-                fragment,
-                Some(Affine::translate((rect.min.x as f64, rect.min.y as f64))),
-            );
-
-            max_size.0 = max_size.0.max(rect.max.x as u32);
-            max_size.1 = max_size.1.max(rect.max.y as u32);
-        }
-
-        let atlas_texture_view = context
-            .atlas_texture
-            .create_view(&TextureViewDescriptor::default());
-
-        context
-            .renderer
-            .render_to_texture(
-                device.wgpu_device(),
-                queue,
-                &scene,
-                &atlas_texture_view,
-                &RenderParams {
-                    base_color: vello::peniko::Color::TRANSPARENT,
-                    width: max_size.0,
-                    height: max_size.1,
-                    antialiasing_method: AaConfig::Area,
-                },
+    let scenes: Vec<_> = query
+        .iter()
+        .map(|(entity, scene)| {
+            (
+                entity,
+                scene.fragment.clone(),
+                scene.image_handle.clone(),
+                scene.width,
+                scene.height,
             )
-            .expect("Failed to render with Vello.");
+        })
+        .collect();
 
-        let atlas = context.atlas.as_ref().unwrap();
-
-        for (entity, VelloScene { image_handle, .. }) in self
-            .scene_entities
-            .iter()
-            .copied()
-            .filter_map(|e| world.get::<VelloScene>(e).map(|s| (e, s)))
-        {
-            let gpu_image = gpu_images.get(image_handle.id()).unwrap();
-            let rect = atlas.get(entity);
-
-            render_context.command_encoder().copy_texture_to_texture(
-                TexelCopyTextureInfo {
-                    texture: &context.atlas_texture,
-                    mip_level: 0,
-                    origin: Origin3d {
-                        x: rect.min.x as u32,
-                        y: rect.min.y as u32,
-                        ..Default::default()
-                    },
-                    aspect: TextureAspect::All,
-                },
-                TexelCopyTextureInfo {
-                    texture: &gpu_image.texture,
-                    mip_level: 0,
-                    origin: Origin3d::ZERO,
-                    aspect: TextureAspect::All,
-                },
-                gpu_image.size,
-            );
-        }
-
+    if scenes.is_empty() {
         context.has_rendered_this_frame = true;
-
-        Ok(())
+        return;
     }
 
-    fn update(&mut self, world: &mut World) {
-        let context = world.resource::<VelloContext>().inner.clone();
-        let mut context = context.lock().unwrap();
+    let sizes: Vec<_> = scenes
+        .iter()
+        .map(|(entity, _, _, width, height)| (*entity, *width, *height))
+        .collect();
 
-        if context.has_rendered_this_frame {
-            return;
-        }
+    let atlas_size = {
+        let atlas = context.atlas.get_or_insert_with(|| VelloAtlas::new(&sizes));
+        atlas.update_size(&sizes);
+        atlas.allocate_all(&sizes);
 
-        let query_state = world.query::<(Entity, &VelloScene)>();
-        let mut sizes = Sizes { world, query_state };
-
-        let mut skip_update_size = true;
-        let atlas = context.atlas.get_or_insert_with(|| {
-            skip_update_size = true;
-            VelloAtlas::new(&mut sizes)
-        });
-
-        if !skip_update_size {
-            atlas.update_size(&mut sizes);
-        }
-
-        atlas.allocate_all(&mut sizes);
-
-        let atlas_size = Extent3d {
+        Extent3d {
             width: atlas.width(),
             height: atlas.height(),
             ..Default::default()
-        };
-
-        if context.atlas_texture.width() != atlas_size.width
-            || context.atlas_texture.height() != atlas_size.height
-        {
-            let device = world.resource::<RenderDevice>();
-
-            context.atlas_texture.destroy();
-            context.atlas_texture = device.create_texture(&TextureDescriptor {
-                label: None,
-                size: atlas_size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::Rgba8Unorm,
-                usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
-                view_formats: &[],
-            })
         }
+    };
 
-        self.scene_entities.clear();
-        self.scene_entities.extend(
-            world
-                .query_filtered::<Entity, With<VelloScene>>()
-                .iter(world),
+    if context.atlas_texture.width() != atlas_size.width
+        || context.atlas_texture.height() != atlas_size.height
+    {
+        context.atlas_texture.destroy();
+        context.atlas_texture = render_device.create_texture(&TextureDescriptor {
+            label: None,
+            size: atlas_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+    }
+
+    let placements: Vec<_> = {
+        let atlas = context.atlas.as_ref().unwrap();
+
+        scenes
+            .iter()
+            .map(|(entity, _, image_handle, _, _)| {
+                (*entity, atlas.get(*entity), image_handle.clone())
+            })
+            .collect()
+    };
+
+    let mut scene = vello::Scene::default();
+    let mut max_size = (0, 0);
+
+    for ((_, fragment, _, _, _), (_, rect, _)) in scenes.iter().zip(&placements) {
+        scene.append(
+            fragment,
+            Some(Affine::translate((rect.min.x as f64, rect.min.y as f64))),
+        );
+
+        max_size.0 = max_size.0.max(rect.max.x as u32);
+        max_size.1 = max_size.1.max(rect.max.y as u32);
+    }
+
+    let atlas_texture_view = context
+        .atlas_texture
+        .create_view(&TextureViewDescriptor::default());
+
+    context
+        .renderer
+        .render_to_texture(
+            render_device.wgpu_device(),
+            &render_queue,
+            &scene,
+            &atlas_texture_view,
+            &RenderParams {
+                base_color: vello::peniko::Color::TRANSPARENT,
+                width: max_size.0,
+                height: max_size.1,
+                antialiasing_method: AaConfig::Area,
+            },
+        )
+        .expect("Failed to render with Vello.");
+
+    for (_entity, rect, image_handle) in &placements {
+        let gpu_image = gpu_images
+            .get(image_handle.id())
+            .expect("The Vello output image must exist on the GPU.");
+
+        render_context.command_encoder().copy_texture_to_texture(
+            TexelCopyTextureInfo {
+                texture: &context.atlas_texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: rect.min.x as u32,
+                    y: rect.min.y as u32,
+                    ..Default::default()
+                },
+                aspect: TextureAspect::All,
+            },
+            TexelCopyTextureInfo {
+                texture: &gpu_image.texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            gpu_image.texture_descriptor.size,
         );
     }
+
+    context.has_rendered_this_frame = true;
 }

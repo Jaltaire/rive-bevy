@@ -1,16 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bevy::{
-    core_pipeline::{
-        core_2d::graph::{Core2d, Node2d},
-        core_3d::graph::{Core3d, Node3d},
-    },
+    core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems},
     ecs::batching::BatchingStrategy,
     prelude::*,
-    render::{
-        extract_component::ExtractComponentPlugin, render_graph::RenderGraphExt, Render, RenderApp,
-        RenderSystems,
-    },
+    render::{extract_component::ExtractComponentPlugin, Render, RenderApp, RenderSystems},
 };
 use rive_rs::Instantiate;
 
@@ -367,9 +361,13 @@ impl Plugin for RivePlugin {
         render_app
             .init_resource::<node::VelloContext>()
             .add_systems(Render, reset_renderer.in_set(RenderSystems::Cleanup))
-            .add_render_graph_node::<node::VelloNode>(Core2d, node::VelloNodeLabel::Vello)
-            .add_render_graph_edges(Core2d, (node::VelloNodeLabel::Vello, Node2d::StartMainPass))
-            .add_render_graph_node::<node::VelloNode>(Core3d, node::VelloNodeLabel::Vello)
-            .add_render_graph_edges(Core3d, (node::VelloNodeLabel::Vello, Node3d::StartMainPass));
+            .add_systems(
+                Core2d,
+                node::render_vello_scene_textures.before(Core2dSystems::MainPass),
+            )
+            .add_systems(
+                Core3d,
+                node::render_vello_scene_textures.before(Core3dSystems::MainPass),
+            );
     }
 }

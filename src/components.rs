@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use bevy::{prelude::*, render::extract_component::ExtractComponent};
+use bevy::{
+    prelude::*,
+    render::{extract_component::ExtractComponent, sync_component::SyncComponent},
+};
 
 use crate::Riv;
 
@@ -73,6 +76,10 @@ pub(crate) struct VelloScene {
     pub image_handle: Handle<Image>,
     pub width: u32,
     pub height: u32,
+}
+
+impl SyncComponent for VelloFragment {
+    type Target = VelloScene;
 }
 
 impl ExtractComponent for VelloFragment {

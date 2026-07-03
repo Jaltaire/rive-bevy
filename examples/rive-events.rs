@@ -75,7 +75,7 @@ fn setup_text(mut commands: Commands) {
         .spawn((
             Text::new("Rating: "),
             TextFont {
-                font_size: 32.0,
+                font_size: FontSize::Px(32.0),
                 ..default()
             },
             TextColor(Color::BLACK),
