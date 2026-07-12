@@ -288,9 +288,12 @@ pub(crate) fn instantiate_linear_animations(
     >,
     riv_assets: Res<Assets<Riv>>,
     mut metal_files: ResMut<MetalFiles>,
-    context: Res<MetalRenderContext>,
+    context: Option<Res<MetalRenderContext>>,
     mut riv_entities: ResMut<RivEntities>,
 ) {
+    let Some(context) = context else {
+        return;
+    };
     for (entity, linear_animation, missing_artboard, missing_linear_animation) in &query {
         if let Some(riv) = riv_assets.get(&linear_animation.riv) {
             let handle = linear_animation.riv.clone();
@@ -360,9 +363,12 @@ pub(crate) fn instantiate_state_machines(
     >,
     riv_assets: Res<Assets<Riv>>,
     mut metal_files: ResMut<MetalFiles>,
-    context: Res<MetalRenderContext>,
+    context: Option<Res<MetalRenderContext>>,
     mut riv_entities: ResMut<RivEntities>,
 ) {
+    let Some(context) = context else {
+        return;
+    };
     for (entity, state_machine, missing_artboard, missing_state_machine) in &query {
         if let Some(riv) = riv_assets.get(&state_machine.riv) {
             let handle = state_machine.riv.clone();
