@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     ffi::c_void,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -48,14 +51,24 @@ pub struct NativeStateMachine {
     state_machine: MetalStateMachine,
     artboard: MetalArtboard,
     artboard_lock: Arc<Mutex<()>>,
+    has_drawn: Arc<AtomicBool>,
 }
 
 impl NativeStateMachine {
-    fn new(artboard: MetalArtboard, state_machine: MetalStateMachine) -> Self {
+    fn new(artboard: MetalArtboard, mut state_machine: MetalStateMachine) -> Self {
+        // The C++ runtime clears every trigger at the end of each advance, and
+        // a state machine's first advance can spend all of its transition
+        // evaluations settling out of the entry state. Settling the machine
+        // here guarantees that triggers fired on the same frame the machine is
+        // instantiated are evaluated against the settled state instead of
+        // being consumed by the entry transitions.
+        state_machine.advance_and_apply(Duration::ZERO);
+
         Self {
             state_machine,
             artboard,
             artboard_lock: Arc::new(Mutex::new(())),
+            has_drawn: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -121,6 +134,7 @@ impl NativeScene for NativeStateMachine {
         MetalDrawHandle {
             artboard: self.artboard.clone(),
             artboard_lock: Arc::clone(&self.artboard_lock),
+            has_drawn: Arc::clone(&self.has_drawn),
         }
     }
 }
@@ -130,6 +144,7 @@ pub struct NativeLinearAnimation {
     linear_animation: MetalLinearAnimation,
     artboard: MetalArtboard,
     artboard_lock: Arc<Mutex<()>>,
+    has_drawn: Arc<AtomicBool>,
 }
 
 impl NativeLinearAnimation {
@@ -138,6 +153,7 @@ impl NativeLinearAnimation {
             linear_animation,
             artboard,
             artboard_lock: Arc::new(Mutex::new(())),
+            has_drawn: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -160,6 +176,7 @@ impl NativeScene for NativeLinearAnimation {
         MetalDrawHandle {
             artboard: self.artboard.clone(),
             artboard_lock: Arc::clone(&self.artboard_lock),
+            has_drawn: Arc::clone(&self.has_drawn),
         }
     }
 }
@@ -168,6 +185,7 @@ impl NativeScene for NativeLinearAnimation {
 pub(crate) struct MetalDrawHandle {
     pub(crate) artboard: MetalArtboard,
     pub(crate) artboard_lock: Arc<Mutex<()>>,
+    pub(crate) has_drawn: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Component)]
@@ -467,10 +485,11 @@ pub(crate) fn render_rive_scenes(
             let mut scene = get_scene_or!(return, linear_animation, state_machine);
 
             par_commands.command_scope(|mut commands| {
-                if scene.advance_and_apply(elapsed) {
-                    commands
-                        .entity(entity)
-                        .insert(MetalDrawRequest(scene.draw_handle()));
+                let advanced = scene.advance_and_apply(elapsed);
+                let handle = scene.draw_handle();
+
+                if advanced || !handle.has_drawn.load(Ordering::Relaxed) {
+                    commands.entity(entity).insert(MetalDrawRequest(handle));
                 } else {
                     commands.entity(entity).remove::<MetalDrawRequest>();
                 }

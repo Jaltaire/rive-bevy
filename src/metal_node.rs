@@ -1,4 +1,8 @@
-use std::{collections::HashMap, ffi::c_void};
+use std::{
+    collections::HashMap,
+    ffi::c_void,
+    sync::atomic::Ordering,
+};
 
 use bevy::{
     prelude::*,
@@ -68,9 +72,10 @@ pub(crate) fn render_metal_scene_textures(
     let mut context = context.0.lock().unwrap();
 
     for scene in &query {
-        let gpu_image = gpu_images
-            .get(scene.image_handle.id())
-            .expect("The Rive output image must exist on the GPU.");
+        let Some(gpu_image) = gpu_images.get(scene.image_handle.id()) else {
+            debug!("The Rive output image is not yet available on the GPU. Retrying next frame...");
+            continue;
+        };
 
         let format = gpu_image.texture_descriptor.format;
         let width = scene.width;
@@ -116,5 +121,7 @@ pub(crate) fn render_metal_scene_textures(
             context.flush(render_target, command_buffer);
             metal_renderer::command_buffer_commit(command_buffer);
         }
+
+        scene.handle.has_drawn.store(true, Ordering::Relaxed);
     }
 }
