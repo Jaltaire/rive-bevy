@@ -1,9 +1,9 @@
+#[cfg(not(metal_renderer_native))]
 use std::sync::Arc;
 
-use bevy::{
-    prelude::*,
-    render::{extract_component::ExtractComponent, sync_component::SyncComponent},
-};
+#[cfg(not(metal_renderer_native))]
+use bevy::render::{extract_component::ExtractComponent, sync_component::SyncComponent};
+use bevy::prelude::*;
 
 use crate::Riv;
 
@@ -15,8 +15,13 @@ pub struct LinearAnimation {
     pub sprite_entity: Option<Entity>,
 }
 
+#[cfg(not(metal_renderer_native))]
 #[derive(Component, Debug, Deref, DerefMut)]
 pub struct RiveLinearAnimation(pub rive_rs::LinearAnimation);
+
+#[cfg(metal_renderer_native)]
+#[derive(Component, Debug, Deref, DerefMut)]
+pub struct RiveLinearAnimation(pub(crate) crate::metal::NativeLinearAnimation);
 
 #[derive(Clone, Component, Debug, Default)]
 pub struct StateMachine {
@@ -26,8 +31,13 @@ pub struct StateMachine {
     pub sprite_entity: Option<Entity>,
 }
 
+#[cfg(not(metal_renderer_native))]
 #[derive(Component, Debug, Deref, DerefMut)]
 pub struct RiveStateMachine(pub rive_rs::StateMachine);
+
+#[cfg(metal_renderer_native)]
+#[derive(Component, Debug, Deref, DerefMut)]
+pub struct RiveStateMachine(pub(crate) crate::metal::NativeStateMachine);
 
 #[derive(Component, Debug)]
 pub(crate) struct MissingArtboard;
@@ -67,9 +77,11 @@ impl From<Handle<Image>> for SceneImage {
     }
 }
 
+#[cfg(not(metal_renderer_native))]
 #[derive(Component, Deref)]
 pub(crate) struct VelloFragment(pub Arc<vello::Scene>);
 
+#[cfg(not(metal_renderer_native))]
 #[derive(Component)]
 pub(crate) struct VelloScene {
     pub fragment: Arc<vello::Scene>,
@@ -78,10 +90,12 @@ pub(crate) struct VelloScene {
     pub height: u32,
 }
 
+#[cfg(not(metal_renderer_native))]
 impl SyncComponent for VelloFragment {
     type Target = VelloScene;
 }
 
+#[cfg(not(metal_renderer_native))]
 impl ExtractComponent for VelloFragment {
     type QueryData = (
         &'static VelloFragment,

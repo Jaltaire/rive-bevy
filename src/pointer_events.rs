@@ -65,7 +65,7 @@ impl<'e> PointerEventPasser<'e> {
         &mut self,
         filter_map: F,
         windows: &Query<&Window>,
-        scene: &mut dyn rive_rs::Scene,
+        scene: &mut crate::plugin::DynScene,
         viewport: &Viewport,
     ) {
         self.cursor_moved_events.retain(|cursor_moved| {

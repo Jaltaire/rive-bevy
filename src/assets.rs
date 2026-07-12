@@ -3,11 +3,17 @@ use bevy::{
     prelude::*,
     reflect::TypePath,
 };
+#[cfg(not(metal_renderer_native))]
 use rive_rs::File;
 use thiserror::Error;
 
+#[cfg(not(metal_renderer_native))]
 #[derive(Asset, Debug, Deref, TypePath)]
 pub struct Riv(pub rive_rs::File);
+
+#[cfg(metal_renderer_native)]
+#[derive(Asset, Debug, TypePath)]
+pub struct Riv(pub(crate) Vec<u8>);
 
 #[derive(Debug, Error)]
 pub enum RivLoaderError {
@@ -34,7 +40,11 @@ impl AssetLoader for RivLoader {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
 
-        Ok(Riv(File::new(&bytes)?))
+        #[cfg(not(metal_renderer_native))]
+        return Ok(Riv(File::new(&bytes)?));
+
+        #[cfg(metal_renderer_native)]
+        Ok(Riv(bytes))
     }
 
     fn extensions(&self) -> &[&str] {

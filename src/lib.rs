@@ -1,6 +1,11 @@
 mod assets;
 mod components;
 pub mod events;
+#[cfg(metal_renderer_native)]
+mod metal;
+#[cfg(metal_renderer_native)]
+mod metal_node;
+#[cfg(not(metal_renderer_native))]
 mod node;
 mod plugin;
 mod pointer_events;

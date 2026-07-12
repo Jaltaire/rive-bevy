@@ -1,29 +1,54 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+#[cfg(not(metal_renderer_native))]
+use std::sync::Arc;
 
+#[cfg(metal_renderer_native)]
+use bevy::render::renderer::RenderDevice;
+#[cfg(not(metal_renderer_native))]
+use bevy::ecs::batching::BatchingStrategy;
 use bevy::{
     core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems},
-    ecs::batching::BatchingStrategy,
     prelude::*,
     render::{extract_component::ExtractComponentPlugin, Render, RenderApp, RenderSystems},
 };
+#[cfg(not(metal_renderer_native))]
 use rive_rs::Instantiate;
 
+#[cfg(metal_renderer_native)]
+use crate::metal::{
+    instantiate_linear_animations, instantiate_state_machines, pass_state_machine_input_events,
+    render_rive_scenes,
+};
+#[cfg(not(metal_renderer_native))]
+use crate::{
+    components::{
+        MissingArtboard, MissingLinearAnimation, MissingStateMachine, VelloFragment,
+    },
+    events::InputValue,
+    node,
+};
 use crate::{
     assets::{self, Riv, RivLoader},
     components::{
-        LinearAnimation, MissingArtboard, MissingLinearAnimation, MissingStateMachine,
-        RiveLinearAnimation, RiveStateMachine, SceneImage, StateMachine, VelloFragment, Viewport,
+        LinearAnimation, RiveLinearAnimation, RiveStateMachine, SceneImage, StateMachine,
+        Viewport,
     },
-    events::{GenericEvent, Input, InputValue},
-    node, pointer_events,
+    events::{GenericEvent, Input},
+    pointer_events,
 };
+
+#[cfg(not(metal_renderer_native))]
+pub(crate) type DynScene = dyn rive_rs::Scene;
+
+#[cfg(metal_renderer_native)]
+pub(crate) type DynScene = dyn crate::metal::NativeScene;
 
 macro_rules! get_scene_or {
     ( $keyword:tt, $linear_animation:expr, $state_machine:expr ) => {{
         let linear_animation = $linear_animation
-            .map(|la| la.map_unchanged(|la| (&mut **la) as &mut dyn rive_rs::Scene));
-        let state_machine =
-            $state_machine.map(|sm| sm.map_unchanged(|sm| (&mut **sm) as &mut dyn rive_rs::Scene));
+            .map(|la| la.map_unchanged(|la| (&mut **la) as &mut crate::plugin::DynScene));
+        let state_machine = $state_machine
+            .map(|sm| sm.map_unchanged(|sm| (&mut **sm) as &mut crate::plugin::DynScene));
 
         match (linear_animation, state_machine) {
             (Some(linear_animation), None) => linear_animation,
@@ -35,6 +60,7 @@ macro_rules! get_scene_or {
 
 pub(crate) use get_scene_or;
 
+#[cfg(not(metal_renderer_native))]
 macro_rules! get_or_continue_with_error {
     ( $val:expr, $( $tail:tt )* ) => {
         match $val {
@@ -83,8 +109,9 @@ fn resize_viewports(
 }
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
-struct RivEntities(HashMap<AssetId<assets::Riv>, Entity>);
+pub(crate) struct RivEntities(HashMap<AssetId<assets::Riv>, Entity>);
 
+#[cfg(not(metal_renderer_native))]
 fn instantiate_linear_animations(
     mut commands: Commands,
     query: Query<
@@ -152,6 +179,7 @@ fn instantiate_linear_animations(
     }
 }
 
+#[cfg(not(metal_renderer_native))]
 fn instantiate_state_machines(
     mut commands: Commands,
     query: Query<
@@ -237,6 +265,7 @@ fn reinstantiate_linear_animations(
     }
 }
 
+#[cfg(not(metal_renderer_native))]
 fn pass_state_machine_input_events(
     mut query: Query<&mut RiveStateMachine>,
     mut input_events: MessageReader<Input>,
@@ -270,6 +299,7 @@ fn pass_state_machine_input_events(
     }
 }
 
+#[cfg(not(metal_renderer_native))]
 fn render_rive_scenes(
     time: Res<Time>,
     par_commands: ParallelCommands,
@@ -319,6 +349,7 @@ fn send_generic_events(
     }
 }
 
+#[cfg(not(metal_renderer_native))]
 fn reset_renderer(context: Res<node::VelloContext>) {
     context.reset_renderer();
 }
@@ -349,10 +380,23 @@ impl Plugin for RivePlugin {
                     render_rive_scenes,
                 )
                     .chain(),
+            );
+
+        #[cfg(not(metal_renderer_native))]
+        app.add_plugins(ExtractComponentPlugin::<VelloFragment>::default());
+
+        #[cfg(metal_renderer_native)]
+        app.init_resource::<crate::metal::MetalFiles>()
+            .add_systems(
+                PreUpdate,
+                crate::metal::evict_metal_files
+                    .before(instantiate_linear_animations)
+                    .before(instantiate_state_machines),
             )
-            .add_plugins(ExtractComponentPlugin::<VelloFragment>::default());
+            .add_plugins(ExtractComponentPlugin::<crate::metal::MetalDrawRequest>::default());
     }
 
+    #[cfg(not(metal_renderer_native))]
     fn finish(&self, app: &mut App) {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -368,6 +412,35 @@ impl Plugin for RivePlugin {
             .add_systems(
                 Core3d,
                 node::render_vello_scene_textures.before(Core3dSystems::MainPass),
+            );
+    }
+
+    #[cfg(metal_renderer_native)]
+    fn finish(&self, app: &mut App) {
+        let Some(render_device) = app.world().get_resource::<RenderDevice>() else {
+            return;
+        };
+        let context = crate::metal::create_render_context(render_device);
+        app.insert_resource(context.clone());
+
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+
+        render_app
+            .insert_resource(context)
+            .init_resource::<crate::metal_node::MetalTargets>()
+            .add_systems(
+                Render,
+                crate::metal_node::reset_targets.in_set(RenderSystems::Cleanup),
+            )
+            .add_systems(
+                Core2d,
+                crate::metal_node::render_metal_scene_textures.before(Core2dSystems::MainPass),
+            )
+            .add_systems(
+                Core3d,
+                crate::metal_node::render_metal_scene_textures.before(Core3dSystems::MainPass),
             );
     }
 }
