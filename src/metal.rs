@@ -197,6 +197,7 @@ pub(crate) struct MetalSceneDraw {
     pub(crate) image_handle: Handle<Image>,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) content_rect: Option<[u32; 4]>,
 }
 
 impl SyncComponent for MetalDrawRequest {
@@ -208,6 +209,7 @@ impl ExtractComponent for MetalDrawRequest {
         &'static MetalDrawRequest,
         &'static SceneImage,
         &'static Viewport,
+        Option<&'static crate::components::ArtboardContentRect>,
     );
 
     type QueryFilter = ();
@@ -215,13 +217,18 @@ impl ExtractComponent for MetalDrawRequest {
     type Out = MetalSceneDraw;
 
     fn extract_component(
-        (request, image, viewport): bevy::ecs::query::QueryItem<'_, '_, Self::QueryData>,
+        (request, image, viewport, content_rect): bevy::ecs::query::QueryItem<
+            '_,
+            '_,
+            Self::QueryData,
+        >,
     ) -> Option<Self::Out> {
         Some(MetalSceneDraw {
             handle: request.0.clone(),
             image_handle: image.0.clone(),
             width: viewport.width(),
             height: viewport.height(),
+            content_rect: content_rect.map(|rect| [rect.x, rect.y, rect.width, rect.height]),
         })
     }
 }

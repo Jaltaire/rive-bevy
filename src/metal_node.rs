@@ -114,7 +114,23 @@ pub(crate) fn render_metal_scene_textures(
         let _artboard_guard = scene.handle.artboard_lock.lock().unwrap();
 
         context.begin_frame(width, height, LoadAction::Clear, 0);
-        context.draw_artboard(&scene.handle.artboard, Fit::Contain, Alignment::CENTER, 1.0);
+        match scene.content_rect {
+            Some([frame_x, frame_y, frame_width, frame_height]) => {
+                let (mut view_transform, _) = scene.handle.artboard.alignment_transforms(
+                    Fit::Contain,
+                    Alignment::CENTER,
+                    1.0,
+                    frame_width,
+                    frame_height,
+                );
+                view_transform[4] += frame_x as f32;
+                view_transform[5] += frame_y as f32;
+                context.draw_artboard_with_transform(&scene.handle.artboard, &view_transform);
+            }
+            None => {
+                context.draw_artboard(&scene.handle.artboard, Fit::Contain, Alignment::CENTER, 1.0)
+            }
+        }
 
         unsafe {
             let command_buffer = metal_renderer::command_buffer_new(raw_queue);

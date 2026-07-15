@@ -308,6 +308,7 @@ fn render_rive_scenes(
         Option<&mut RiveLinearAnimation>,
         Option<&mut RiveStateMachine>,
         &mut Viewport,
+        Option<&crate::components::ArtboardContentRect>,
     )>,
 ) {
     const MAX_SCENES_PER_CORE: usize = 8;
@@ -317,7 +318,13 @@ fn render_rive_scenes(
     query
         .par_iter_mut()
         .batching_strategy(BatchingStrategy::new().max_batch_size(MAX_SCENES_PER_CORE))
-        .for_each(|(entity, linear_animation, state_machine, mut viewport)| {
+        .for_each(|(entity, linear_animation, state_machine, mut viewport, content_rect)| {
+            match content_rect {
+                Some(rect) => {
+                    viewport.set_content_rect(rect.x, rect.y, rect.width, rect.height)
+                }
+                None => viewport.clear_content_rect(),
+            }
             let mut renderer = rive_rs::Renderer::default();
             let mut scene = get_scene_or!(return, linear_animation, state_machine);
 

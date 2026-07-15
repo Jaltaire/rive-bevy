@@ -68,6 +68,19 @@ pub struct SceneTarget {
     pub mesh: MeshEntity,
 }
 
+/// Aligns the artboard inside a sub rectangle of the render target instead of
+/// the whole target. The remaining margins become overflow room for content
+/// that draws outside the artboard bounds, which unclipped artboards are
+/// allowed to do; without this the artboard maps edge to edge and any
+/// overflow lands outside the texture.
+#[derive(Clone, Copy, Component, Debug)]
+pub struct ArtboardContentRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Clone, Component, Debug, Default, Deref, DerefMut)]
 pub struct SceneImage(pub Handle<Image>);
 
