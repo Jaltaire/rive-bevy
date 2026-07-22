@@ -8,6 +8,7 @@ mod metal_node;
 #[cfg(not(metal_renderer_native))]
 mod node;
 mod plugin;
+#[cfg(feature = "pointer-events")]
 mod pointer_events;
 
 // Re-export rive-rs

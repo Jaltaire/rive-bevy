@@ -34,8 +34,9 @@ use crate::{
         Viewport,
     },
     events::{GenericEvent, Input},
-    pointer_events,
 };
+#[cfg(feature = "pointer-events")]
+use crate::pointer_events;
 
 #[cfg(not(metal_renderer_native))]
 pub(crate) type DynScene = dyn rive_rs::Scene;
@@ -58,6 +59,7 @@ macro_rules! get_scene_or {
     }};
 }
 
+#[cfg(feature = "pointer-events")]
 pub(crate) use get_scene_or;
 
 #[cfg(not(metal_renderer_native))]
@@ -381,13 +383,18 @@ impl Plugin for RivePlugin {
             .add_systems(
                 Update,
                 (
-                    pointer_events::pass,
                     pass_state_machine_input_events,
                     send_generic_events,
                     render_rive_scenes,
                 )
                     .chain(),
             );
+
+        #[cfg(feature = "pointer-events")]
+        app.add_systems(
+            Update,
+            pointer_events::pass.before(pass_state_machine_input_events),
+        );
 
         #[cfg(not(metal_renderer_native))]
         app.add_plugins(ExtractComponentPlugin::<VelloFragment>::default());
