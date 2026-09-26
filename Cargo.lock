@@ -3037,7 +3037,7 @@ dependencies = [
 [[package]]
 name = "rive-rs"
 version = "0.1.0"
-source = "git+https://github.com/Jaltaire/rive-rs?branch=bevy-0.19#3361f4c9d8f2e077fa9bdae09b5c4a4a85b9427d"
+source = "git+https://github.com/Jaltaire/rive-rs?branch=main-jaltaire#06a28b3571c418e8cf25a68726822b985b5bc577"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
