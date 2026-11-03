@@ -13,7 +13,7 @@ use bevy::{
     prelude::*,
     render::{
         extract_component::ExtractComponent, renderer::RenderDevice,
-        sync_component::SyncComponent,
+        sync_component::SyncComponent, RenderApp,
     },
 };
 use rive_rs::metal_renderer::{
@@ -200,11 +200,11 @@ pub(crate) struct MetalSceneDraw {
     pub(crate) content_rect: Option<[u32; 4]>,
 }
 
-impl SyncComponent for MetalDrawRequest {
+impl SyncComponent<RenderApp> for MetalDrawRequest {
     type Target = MetalSceneDraw;
 }
 
-impl ExtractComponent for MetalDrawRequest {
+impl ExtractComponent<RenderApp> for MetalDrawRequest {
     type QueryData = (
         &'static MetalDrawRequest,
         &'static SceneImage,

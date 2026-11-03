@@ -18,7 +18,7 @@ metal-renderer = ["rive-rs/metal-renderer", "dep:wgpu"]
 pointer-events = ["bevy/bevy_mesh", "bevy/bevy_pbr", "bevy/bevy_sprite"]
 
 [dependencies]
-bevy = { version = "0.19.0", default-features = false, features = [
+bevy = { version = "0.20.1", default-features = false, features = [
     "bevy_asset",
     "bevy_camera",
     "bevy_core_pipeline",
@@ -30,10 +30,10 @@ bevy = { version = "0.19.0", default-features = false, features = [
 etagere = "0.2.8"
 rive-rs = { git = "https://github.com/Jaltaire/rive-rs", branch = "main-jaltaire", default-features = false, features = ["vello"] }
 thiserror = "2.0"
-vello = "0.9.0"
+vello = "0.11.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-wgpu = { version = "29", default-features = false, features = ["metal"], optional = true }
+wgpu = { version = "30", default-features = false, features = ["metal"], optional = true }
 
 [dev-dependencies]
 rand = "0.8.5"

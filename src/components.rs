@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 #[cfg(not(metal_renderer_native))]
-use bevy::render::{extract_component::ExtractComponent, sync_component::SyncComponent};
+use bevy::render::{extract_component::ExtractComponent, sync_component::SyncComponent, RenderApp};
 use bevy::prelude::*;
 
 use crate::Riv;
@@ -104,12 +104,12 @@ pub(crate) struct VelloScene {
 }
 
 #[cfg(not(metal_renderer_native))]
-impl SyncComponent for VelloFragment {
+impl SyncComponent<RenderApp> for VelloFragment {
     type Target = VelloScene;
 }
 
 #[cfg(not(metal_renderer_native))]
-impl ExtractComponent for VelloFragment {
+impl ExtractComponent<RenderApp> for VelloFragment {
     type QueryData = (
         &'static VelloFragment,
         &'static SceneImage,

@@ -1,10 +1,11 @@
 use bevy::{
     camera::visibility::RenderLayers,
     input::{mouse::MouseButtonInput, ButtonState},
-    math::{Ray3d, Vec3A},
+    math::Vec3A,
     mesh::{Indices, VertexAttributeValues},
     prelude::*,
     render::render_resource::Face,
+    shape::Ray3d,
 };
 
 use crate::{
