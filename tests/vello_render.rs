@@ -99,11 +99,8 @@ fn render_state_machine(format: TextureFormat) -> Vec<u8> {
         app.update();
     }
 
-    captured
-        .lock()
-        .unwrap()
-        .take()
-        .expect("The Rive scene never produced non-zero pixels in the target image.")
+    let pixels = captured.lock().unwrap().take();
+    pixels.expect("The Rive scene never produced non-zero pixels in the target image.")
 }
 
 fn assert_drawn_artboard(pixels: &[u8]) {
@@ -120,23 +117,25 @@ fn assert_drawn_artboard(pixels: &[u8]) {
     );
 
     let transparent = pixels.chunks_exact(4).filter(|pixel| pixel[3] == 0).count();
-    let opaque = pixels.chunks_exact(4).filter(|pixel| pixel[3] == 255).count();
-    assert!(
-        transparent > 0,
-        "The artboard covered every pixel, so the scene was not placed inside the target."
+    assert_eq!(
+        transparent, 0,
+        "The artboard paints its background over the whole target, so a transparent pixel means part of the target was never drawn."
     );
+
+    let luminance = |pixel: &[u8]| {
+        0.2126 * f32::from(pixel[0]) + 0.7152 * f32::from(pixel[1]) + 0.0722 * f32::from(pixel[2])
+    };
+    let darkest = pixels.chunks_exact(4).map(luminance).fold(f32::MAX, f32::min);
+    let brightest = pixels.chunks_exact(4).map(luminance).fold(f32::MIN, f32::max);
     assert!(
-        opaque > 0,
-        "No pixel of the target is fully covered, so the artboard drew no solid shape."
+        darkest < brightest / 2.0,
+        "The artboard's stars should be drawn far darker than its background, but the target spans only {darkest} to {brightest}."
     );
 }
 
 #[test]
-fn renders_a_state_machine_into_an_rgba8_unorm_target() {
-    assert_drawn_artboard(&render_state_machine(TextureFormat::Rgba8Unorm));
-}
-
-#[test]
-fn renders_a_state_machine_into_an_rgba8_unorm_srgb_target() {
-    assert_drawn_artboard(&render_state_machine(TextureFormat::Rgba8UnormSrgb));
+fn renders_a_state_machine_into_unorm_and_srgb_targets() {
+    for format in [TextureFormat::Rgba8Unorm, TextureFormat::Rgba8UnormSrgb] {
+        assert_drawn_artboard(&render_state_machine(format));
+    }
 }
