@@ -21,6 +21,6 @@ pub use crate::{
         SceneImage, SceneTarget, SpriteEntity, StateMachine,
     },
     events::GenericEvent,
-    plugin::RivePlugin,
+    plugin::{missing_downlevel_flags, renders_on, RivePlugin, REQUIRED_DOWNLEVEL_FLAGS},
     rive_rs::Handle,
 };

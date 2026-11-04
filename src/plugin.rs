@@ -6,10 +6,15 @@ use std::sync::Arc;
 use bevy::render::renderer::RenderDevice;
 #[cfg(not(metal_renderer_native))]
 use bevy::ecs::batching::BatchingStrategy;
+#[cfg(not(metal_renderer_native))]
+use bevy::render::renderer::RenderAdapter;
 use bevy::{
     core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems},
     prelude::*,
-    render::{extract_component::ExtractComponentPlugin, Render, RenderApp, RenderSystems},
+    render::{
+        extract_component::ExtractComponentPlugin, render_resource::DownlevelFlags, Render,
+        RenderApp, RenderSystems,
+    },
 };
 #[cfg(not(metal_renderer_native))]
 use rive_rs::Instantiate;
@@ -362,6 +367,44 @@ fn send_generic_events(
 fn reset_renderer(context: Res<node::VelloContext>) {
     context.reset_renderer();
 }
+
+#[cfg(not(metal_renderer_native))]
+pub const REQUIRED_DOWNLEVEL_FLAGS: DownlevelFlags = DownlevelFlags::COMPUTE_SHADERS
+    .union(DownlevelFlags::INDIRECT_EXECUTION)
+    .union(DownlevelFlags::SHADER_F16_IN_F32);
+
+#[cfg(metal_renderer_native)]
+pub const REQUIRED_DOWNLEVEL_FLAGS: DownlevelFlags = DownlevelFlags::empty();
+
+pub fn missing_downlevel_flags(flags: DownlevelFlags) -> DownlevelFlags {
+    REQUIRED_DOWNLEVEL_FLAGS.difference(flags)
+}
+
+pub fn renders_on(flags: DownlevelFlags) -> bool {
+    missing_downlevel_flags(flags).is_empty()
+}
+
+#[cfg(not(metal_renderer_native))]
+fn add_vello_rendering(render_app: &mut SubApp, flags: DownlevelFlags) {
+    let missing = missing_downlevel_flags(flags);
+    if !missing.is_empty() {
+        warn!("The GPU lacks {missing:?}, which Vello needs, so Rive scenes will not be drawn.");
+        return;
+    }
+
+    render_app
+        .init_resource::<node::VelloContext>()
+        .add_systems(Render, reset_renderer.in_set(RenderSystems::Cleanup))
+        .add_systems(
+            Core2d,
+            node::render_vello_scene_textures.before(Core2dSystems::MainPass),
+        )
+        .add_systems(
+            Core3d,
+            node::render_vello_scene_textures.before(Core3dSystems::MainPass),
+        );
+}
+
 pub struct RivePlugin;
 
 impl Plugin for RivePlugin {
@@ -416,17 +459,12 @@ impl Plugin for RivePlugin {
             return;
         };
 
-        render_app
-            .init_resource::<node::VelloContext>()
-            .add_systems(Render, reset_renderer.in_set(RenderSystems::Cleanup))
-            .add_systems(
-                Core2d,
-                node::render_vello_scene_textures.before(Core2dSystems::MainPass),
-            )
-            .add_systems(
-                Core3d,
-                node::render_vello_scene_textures.before(Core3dSystems::MainPass),
-            );
+        let flags = render_app
+            .world()
+            .resource::<RenderAdapter>()
+            .get_downlevel_capabilities()
+            .flags;
+        add_vello_rendering(render_app, flags);
     }
 
     #[cfg(metal_renderer_native)]
@@ -456,5 +494,92 @@ impl Plugin for RivePlugin {
                 Core3d,
                 crate::metal_node::render_metal_scene_textures.before(Core3dSystems::MainPass),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(metal_renderer_native))]
+    use bevy::ecs::schedule::ScheduleLabel;
+
+    use super::*;
+
+    #[test]
+    fn an_adapter_with_every_flag_renders() {
+        assert!(renders_on(DownlevelFlags::all()));
+        assert!(missing_downlevel_flags(DownlevelFlags::all()).is_empty());
+    }
+
+    #[test]
+    fn an_adapter_with_exactly_the_required_flags_renders() {
+        assert!(renders_on(REQUIRED_DOWNLEVEL_FLAGS));
+    }
+
+    #[test]
+    fn flags_the_renderer_does_not_use_do_not_matter() {
+        let flags = DownlevelFlags::all()
+            .difference(DownlevelFlags::FRAGMENT_WRITABLE_STORAGE | DownlevelFlags::VERTEX_STORAGE);
+        assert!(renders_on(flags));
+    }
+
+    #[cfg(not(metal_renderer_native))]
+    #[test]
+    fn vello_needs_compute_indirect_dispatch_and_half_float_packing() {
+        assert_eq!(
+            REQUIRED_DOWNLEVEL_FLAGS,
+            DownlevelFlags::COMPUTE_SHADERS
+                | DownlevelFlags::INDIRECT_EXECUTION
+                | DownlevelFlags::SHADER_F16_IN_F32
+        );
+    }
+
+    #[cfg(not(metal_renderer_native))]
+    #[test]
+    fn an_adapter_with_no_flags_lacks_every_required_one() {
+        assert!(!renders_on(DownlevelFlags::empty()));
+        assert_eq!(
+            missing_downlevel_flags(DownlevelFlags::empty()),
+            REQUIRED_DOWNLEVEL_FLAGS
+        );
+    }
+
+    #[cfg(not(metal_renderer_native))]
+    #[test]
+    fn an_adapter_lacking_any_one_required_flag_does_not_render() {
+        for flag in REQUIRED_DOWNLEVEL_FLAGS.iter() {
+            let flags = DownlevelFlags::all().difference(flag);
+            assert!(!renders_on(flags), "{flag:?} is required.");
+            assert_eq!(missing_downlevel_flags(flags), flag);
+        }
+    }
+
+    #[cfg(not(metal_renderer_native))]
+    #[test]
+    fn an_adapter_lacking_a_required_flag_gets_no_vello_renderer() {
+        for flag in REQUIRED_DOWNLEVEL_FLAGS.iter() {
+            let mut render_app = SubApp::new();
+            add_vello_rendering(&mut render_app, DownlevelFlags::all().difference(flag));
+            assert!(
+                !render_app.world().contains_resource::<node::VelloContext>(),
+                "Without {flag:?}, no Vello renderer is made."
+            );
+            for label in [Render.intern(), Core2d.intern(), Core3d.intern()] {
+                assert!(
+                    render_app
+                        .world()
+                        .resource::<Schedules>()
+                        .get(label)
+                        .is_none(),
+                    "Without {flag:?}, nothing is scheduled in {label:?}."
+                );
+            }
+        }
+    }
+
+    #[cfg(metal_renderer_native)]
+    #[test]
+    fn the_native_metal_renderer_needs_no_downlevel_flag() {
+        assert!(REQUIRED_DOWNLEVEL_FLAGS.is_empty());
+        assert!(renders_on(DownlevelFlags::empty()));
     }
 }
